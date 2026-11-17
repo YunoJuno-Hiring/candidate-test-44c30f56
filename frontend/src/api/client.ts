@@ -49,9 +49,44 @@ export interface Invoice {
 }
 
 export interface WebhookEndpoint {
-  id: string | number
+  id: number
   url: string
+  description: string
   active: boolean
+  created_at: string
+  updated_at: string
+}
+
+// Only returned when an endpoint is created; otherwise fetch via revealWebhookSecret.
+export interface WebhookEndpointWithSecret extends WebhookEndpoint {
+  secret: string
+}
+
+export interface WebhookAttempt {
+  attempt_number: number
+  attempted_at: string
+  response_status: number | null
+  response_body: string
+  error: string
+  duration_ms: number | null
+}
+
+// DRF CursorPagination envelope.
+export interface CursorPage<T> {
+  next: string | null
+  previous: string | null
+  results: T[]
+}
+
+export interface WebhookDelivery {
+  id: number
+  event_id: string
+  event_type: string
+  status: 'pending' | 'succeeded' | 'dead'
+  attempt_count: number
+  next_attempt_at: string | null
+  created_at: string
+  attempts: WebhookAttempt[]
 }
 
 function getToken(): string | null {

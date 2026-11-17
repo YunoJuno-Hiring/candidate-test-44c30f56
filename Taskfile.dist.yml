@@ -2,37 +2,37 @@ version: '3'
 
 tasks:
   up:
-    desc: Start the Docker Compose services in the background.
+    desc: Build and start the full stack (db, mailpit, receiver, backend, frontend) in Docker.
     cmds:
-      - docker compose up -d
+      - docker compose up -d --build
 
   seed:
-    desc: Run backend migrations and seed the database.
-    dir: backend
+    desc: Run backend migrations and seed the database (inside the backend container).
     cmds:
-      - uv run python manage.py migrate --noinput
-      - uv run python manage.py seed
+      - docker compose exec backend uv run python manage.py migrate --noinput
+      - docker compose exec backend uv run python manage.py seed
 
   test:
-    desc: Run the backend test suite.
-    dir: backend
+    desc: Run the backend test suite (inside the backend container).
     cmds:
-      - uv run pytest
+      - docker compose exec backend uv run pytest {{.CLI_ARGS}}
+
+  # --- Host-based alternatives (for the nix flake / local toolchain workflow) ---
 
   backend:
-    desc: Start the backend development server.
+    desc: Start the backend dev server on the host.
     dir: backend
     cmds:
       - uv run python manage.py runserver
 
   frontend:
-    desc: Start the frontend development server.
+    desc: Start the frontend dev server on the host.
     dir: frontend
     cmds:
       - pnpm run dev
 
   receiver:
-    desc: Install webhook receiver dependencies and start the receiver.
+    desc: Install webhook receiver dependencies and start the receiver on the host.
     dir: services/webhook-receiver
     cmds:
       - npm install --omit=dev --silent

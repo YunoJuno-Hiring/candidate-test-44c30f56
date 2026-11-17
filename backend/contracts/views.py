@@ -1,7 +1,11 @@
+from django.db import transaction
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+from webhooks.models import WebhookEvent
+from webhooks.events import emit_event, timesheet_approved_data
 
 from .models import Contract, TimesheetEntry
 from .serializers import (
@@ -130,19 +134,26 @@ class TimesheetListCreateView(APIView):
 class TimesheetDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
+    ADMIN_ONLY_STATUSES = {TimesheetEntry.STATUS_APPROVED, TimesheetEntry.STATUS_REJECTED}
+
+    @transaction.atomic
     def patch(self, request, pk):
         user = request.user
 
+        # select_for_update: two concurrent approvals (double-click, two admins)
+        # serialise here, so only the first sees the old status and emits.
+        entries = TimesheetEntry.objects.select_for_update(of=('self',))
+
         if hasattr(user, 'company_admin'):
             try:
-                entry = TimesheetEntry.objects.get(
+                entry = entries.get(
                     pk=pk, contract__company=user.company_admin.company
                 )
             except TimesheetEntry.DoesNotExist:
                 return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
         elif hasattr(user, 'freelancer'):
             try:
-                entry = TimesheetEntry.objects.get(
+                entry = entries.get(
                     pk=pk, contract__freelancer=user.freelancer
                 )
             except TimesheetEntry.DoesNotExist:
@@ -153,13 +164,29 @@ class TimesheetDetailView(APIView):
         new_status = request.data.get('status')
         rejection_reason = request.data.get('rejection_reason')
 
+        if new_status in self.ADMIN_ONLY_STATUSES and not hasattr(user, 'company_admin'):
+            return Response(
+                {'detail': 'Only company admins can approve or reject entries.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         if new_status == TimesheetEntry.STATUS_REJECTED and not rejection_reason:
             return Response(
                 {'rejection_reason': 'This field is required when rejecting an entry.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        previous_status = entry.status
         serializer = TimesheetEntrySerializer(entry, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
-        serializer.save()
+        entry = serializer.save()
+
+        # Ensuring re-PATCHing an approved entry doesn't fire a new webhook event
+        if previous_status != TimesheetEntry.STATUS_APPROVED and entry.status == TimesheetEntry.STATUS_APPROVED:
+            emit_event(
+                entry.contract.company,
+                WebhookEvent.TYPE_TIMESHEET_APPROVED,
+                timesheet_approved_data(entry),
+            )
+
         return Response(serializer.data)

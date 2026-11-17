@@ -9,12 +9,62 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yunojuno -d yunojuno"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
 
   mailpit:
     image: axllent/mailpit
     ports:
       - "8025:8025"
       - "1025:1025"
+
+  webhook-receiver:
+    build: ./services/webhook-receiver
+    ports:
+      - "8027:8027"
+
+  backend:
+    build: ./backend
+    environment:
+      DB_HOST: db
+      EMAIL_HOST: mailpit
+      DEBUG: "True"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker:
+    build: ./backend
+    command: ["uv", "run", "python", "manage.py", "deliver_webhooks"]
+    environment:
+      DB_HOST: db
+      EMAIL_HOST: mailpit
+      DEBUG: "True"
+    volumes:
+      - ./backend:/app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    environment:
+      API_PROXY_TARGET: http://backend:8000
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
 
 volumes:
   postgres_data:
